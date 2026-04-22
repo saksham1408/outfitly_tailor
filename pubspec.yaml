@@ -1,0 +1,52 @@
+name: outfitly_tailor
+description: "Outfitly Tailor Partner App — real-time dispatch radar for bespoke tailors"
+# This app is the Partner-side counterpart to the main Outfitly customer
+# app. It is deliberately a SEPARATE binary (different launcher icon,
+# different bundle id, different Play/App Store listing) that connects to
+# the SAME Supabase backend — so a tailor accepting a job here flips the
+# same row that the customer app is watching.
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.7.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # ── Backend ──
+  # The Partner app shares Supabase with the customer app. Realtime is
+  # the critical bit: we subscribe to the `tailor_appointments` table
+  # filtered on status='pending' and re-render the radar the instant a
+  # new request lands.
+  supabase_flutter: ^2.12.2
+
+  # Secrets (SUPABASE_URL / SUPABASE_ANON_KEY) live in a bundled .env so
+  # they aren't hard-coded into source. The same pattern the customer
+  # app uses — keeps the two apps symmetric.
+  flutter_dotenv: ^5.2.1
+
+  # Declarative routing with an auth-aware redirect gate. Keeps the
+  # login → radar → active-job transitions single-sourced.
+  go_router: ^17.0.0
+
+  # Inter typeface for the premium dark-mode dispatch look. Picked over
+  # the stock Roboto because Inter's tabular numerals read much cleaner
+  # on the scheduled-time stamps.
+  google_fonts: ^6.3.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - .env
