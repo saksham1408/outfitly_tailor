@@ -43,3 +43,8 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Local environment (bundled at build time via pubspec.yaml assets,
+# but the concrete values must not land in git). `.env.example`
+# tracks the template schema.
+.env
