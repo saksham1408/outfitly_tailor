@@ -2,15 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import '../../../core/network/supabase_client.dart';
 import '../../../core/theme/app_theme.dart';
+import '../data/auth_service.dart';
 
 /// Tailor-Partner login.
 ///
-/// Deliberately minimal and deliberately has NO sign-up flow: Partners
-/// are provisioned by Outfitly ops (we vet tailors before they can
-/// accept dispatches). An unknown email hitting this screen gets a
-/// standard "invalid credentials" error and bounces off.
+/// Entry point into the Partner app. Tailors authenticate with the
+/// email + password they set during registration; on success the
+/// Supabase session is persisted and the router's redirect gate
+/// forwards them to `/radar`. Users without an account tap the
+/// "Apply to be a Tailor" link at the bottom to hop onto `/register`.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -22,6 +23,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _auth = AuthService();
 
   bool _submitting = false;
   String? _errorText;
@@ -43,13 +45,11 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
-      await AppSupabase.client.auth.signInWithPassword(
-        email: _emailController.text.trim(),
+      await _auth.login(
+        email: _emailController.text,
         password: _passwordController.text,
       );
       if (!mounted) return;
-      // GoRouter's redirect gate sees the new session and sends us
-      // forward to /radar automatically — we just nudge it.
       context.go('/radar');
     } on AuthException catch (e) {
       if (!mounted) return;
@@ -81,7 +81,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     const _BrandMark(),
                     const SizedBox(height: 28),
                     Text(
-                      'Outfitly Tailor',
+                      'Outfitly Partner',
                       textAlign: TextAlign.center,
                       style: text.headlineSmall?.copyWith(
                         fontWeight: FontWeight.w700,
@@ -90,7 +90,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'Partner login',
+                      'Welcome back. Sign in to go online.',
                       textAlign: TextAlign.center,
                       style: text.bodyMedium?.copyWith(
                         color: AppColors.textSecondary,
@@ -110,7 +110,9 @@ class _LoginScreenState extends State<LoginScreen> {
                         if (v == null || v.trim().isEmpty) {
                           return 'Enter your email';
                         }
-                        if (!v.contains('@')) return 'Enter a valid email';
+                        if (!v.contains('@') || !v.contains('.')) {
+                          return 'Enter a valid email';
+                        }
                         return null;
                       },
                     ),
@@ -138,6 +140,8 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ],
                     const SizedBox(height: 28),
+                    // High-contrast primary CTA. Theme already sizes it
+                    // at 56dp — the visual anchor of the screen.
                     ElevatedButton(
                       onPressed: _submitting ? null : _handleLogin,
                       child: _submitting
@@ -151,15 +155,41 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ),
                               ),
                             )
-                          : const Text('SIGN IN'),
+                          : const Text('LOGIN'),
                     ),
-                    const SizedBox(height: 20),
-                    Text(
-                      'Access is provisioned by the Outfitly ops team.\nContact support if you need an account.',
-                      textAlign: TextAlign.center,
-                      style: text.bodySmall?.copyWith(
-                        color: AppColors.textTertiary,
-                        height: 1.5,
+                    const SizedBox(height: 22),
+                    _DividerWithLabel(label: 'or'),
+                    const SizedBox(height: 22),
+                    // Secondary CTA — routes into the self-serve
+                    // registration flow. Worded as "Apply" so partners
+                    // understand there's a vetting step (even if, for
+                    // the MVP, registration is open).
+                    TextButton(
+                      onPressed: _submitting
+                          ? null
+                          : () => context.push('/register'),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        foregroundColor: AppColors.accent,
+                      ),
+                      child: RichText(
+                        textAlign: TextAlign.center,
+                        text: TextSpan(
+                          style: text.bodyMedium?.copyWith(
+                            color: AppColors.textSecondary,
+                            height: 1.5,
+                          ),
+                          children: [
+                            const TextSpan(text: 'Apply to be a Tailor — '),
+                            TextSpan(
+                              text: 'Register Here',
+                              style: TextStyle(
+                                color: AppColors.accent,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ],
@@ -207,6 +237,36 @@ class _BrandMark extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Horizontal rule with a centre label — visually separates the
+/// primary CTA from the secondary register link so neither steals
+/// focus from the other.
+class _DividerWithLabel extends StatelessWidget {
+  const _DividerWithLabel({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const Expanded(child: Divider(color: AppColors.divider, height: 1)),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          child: Text(
+            label.toUpperCase(),
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: AppColors.textTertiary,
+                  letterSpacing: 1.6,
+                  fontWeight: FontWeight.w600,
+                ),
+          ),
+        ),
+        const Expanded(child: Divider(color: AppColors.divider, height: 1)),
+      ],
     );
   }
 }
