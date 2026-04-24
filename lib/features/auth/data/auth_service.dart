@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/network/supabase_client.dart';
+import '../../../core/push/device_token_service.dart';
 
 /// Single seam between the Tailor app's UI and Supabase Auth + the
 /// `tailor_profiles` table.
@@ -15,6 +18,7 @@ class AuthService {
       : _client = client ?? AppSupabase.client;
 
   final SupabaseClient _client;
+  final DeviceTokenService _deviceTokens = DeviceTokenService();
 
   /// Sign an existing tailor in with email + password. On success the
   /// Supabase session is persisted automatically — the router's
@@ -29,6 +33,11 @@ class AuthService {
       email: email.trim(),
       password: password,
     );
+    // Fire-and-forget — the stub no-ops until FCM is wired up, so
+    // this is safe to call today. Once the integration lands, the
+    // device token registers here and the tailor is reachable for
+    // "new pending dispatch" pushes.
+    unawaited(_deviceTokens.registerCurrent());
   }
 
   /// Create a new tailor Partner account.
@@ -93,8 +102,17 @@ class AuthService {
       await _client.auth.signOut();
       rethrow;
     }
+
+    // First-login push-token register, same rationale as [login].
+    unawaited(_deviceTokens.registerCurrent());
   }
 
-  /// Explicit sign-out (used from the radar screen's logout button).
-  Future<void> logout() => _client.auth.signOut();
+  /// Explicit sign-out (used from the profile screen's logout button).
+  /// The device-token delete has to run BEFORE signOut — once auth.uid()
+  /// flips to null, the RLS policy on device_tokens would reject the
+  /// DELETE.
+  Future<void> logout() async {
+    await _deviceTokens.unregisterCurrent();
+    await _client.auth.signOut();
+  }
 }
