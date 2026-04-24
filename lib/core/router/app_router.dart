@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../features/auth/presentation/login_screen.dart';
 import '../../features/auth/presentation/register_screen.dart';
+import '../../features/profile/presentation/profile_screen.dart';
 import '../../features/radar/domain/tailor_appointment.dart';
 import '../../features/radar/presentation/active_job_screen.dart';
 import '../../features/radar/presentation/radar_screen.dart';
@@ -10,11 +11,12 @@ import '../network/supabase_client.dart';
 
 /// App-wide route configuration.
 ///
-/// A deliberately tiny graph — Partners see four surfaces:
+/// A deliberately tiny graph — Partners see five surfaces:
 ///   * `/login`     — returning-partner sign-in
 ///   * `/register`  — self-serve partner application form
 ///   * `/radar`     — listening dashboard (the home screen)
 ///   * `/active-job` — after accepting a request
+///   * `/profile`   — account screen (read + edit tailor_profiles)
 ///
 /// The `redirect` callback is the auth gate. It runs on every route
 /// change (including cold launch) and handles session persistence for
@@ -79,6 +81,11 @@ abstract final class AppRouter {
           final appt = state.extra as TailorAppointment;
           return ActiveJobScreen(appointment: appt);
         },
+      ),
+      GoRoute(
+        path: '/profile',
+        name: 'profile',
+        builder: (_, _) => const ProfileScreen(),
       ),
     ],
   );

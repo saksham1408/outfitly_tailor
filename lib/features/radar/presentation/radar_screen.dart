@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../core/network/supabase_client.dart';
 import '../../../core/theme/app_theme.dart';
 import '../data/appointment_service.dart';
 import '../domain/tailor_appointment.dart';
@@ -108,15 +107,6 @@ class _RadarScreenState extends State<RadarScreen> {
     });
   }
 
-  Future<void> _handleLogout() async {
-    await AppSupabase.client.auth.signOut();
-    if (!mounted) return;
-    // GoRouter's redirect sends us back to /login the moment the
-    // session clears, but nudging avoids a one-frame flash of the
-    // radar behind a modal exit.
-    context.go('/login');
-  }
-
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
@@ -126,9 +116,9 @@ class _RadarScreenState extends State<RadarScreen> {
         title: const Text('Dispatch Radar'),
         actions: [
           IconButton(
-            tooltip: 'Sign out',
-            icon: const Icon(Icons.logout_rounded),
-            onPressed: _handleLogout,
+            tooltip: 'Account',
+            icon: const Icon(Icons.person_outline_rounded),
+            onPressed: () => context.push('/profile'),
           ),
         ],
       ),
