@@ -65,4 +65,37 @@ class AppointmentService {
     if (updated == null) return null;
     return TailorAppointment.fromJson(updated);
   }
+
+  /// Advance the appointment to the next lifecycle stage.
+  ///
+  /// Used by the active job screen's stepper: accepted → enRoute,
+  /// enRoute → arrived, arrived → completed. The UPDATE is guarded
+  /// by `tailor_id = auth.uid()` (server-side via RLS) and by
+  /// `status = expectedFrom` (client-side here) so a stale tap on
+  /// an outdated screen can't skip a step.
+  ///
+  /// Returns the updated row on success, or null if the guards
+  /// failed (e.g. the customer cancelled in the meantime).
+  Future<TailorAppointment?> progressJob({
+    required String appointmentId,
+    required AppointmentStatus expectedFrom,
+    required AppointmentStatus to,
+  }) async {
+    final tailor = _client.auth.currentUser;
+    if (tailor == null) {
+      throw StateError('Cannot progress a job while signed out.');
+    }
+
+    final updated = await _client
+        .from(_table)
+        .update({'status': to.asDbString})
+        .eq('id', appointmentId)
+        .eq('tailor_id', tailor.id)
+        .eq('status', expectedFrom.asDbString)
+        .select()
+        .maybeSingle();
+
+    if (updated == null) return null;
+    return TailorAppointment.fromJson(updated);
+  }
 }
