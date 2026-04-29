@@ -45,5 +45,9 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Outfitly Tailor needs access to your photo library so you can showcase your tailoring work in your portfolio gallery.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Outfitly Tailor needs access to your camera so you can capture photos of your tailoring work directly into your portfolio.</string>
 </dict>
 </plist>

@@ -6,18 +6,23 @@ import '../../../core/network/supabase_client.dart';
 import '../../../core/theme/app_theme.dart';
 import '../data/profile_service.dart';
 import '../domain/tailor_profile.dart';
+import 'widgets/portfolio_gallery.dart';
 
-/// Partner-facing account screen.
+/// Partner-facing account screen — the tailor's professional
+/// workstation header.
 ///
-/// Read side renders a compact header (avatar initial + name + email)
-/// and a "Partner details" card with the editable fields. Tapping
-/// EDIT flips the card into a form; SAVE persists via
-/// [ProfileService.updateMine] and flips back on success.
+/// Layout:
+///   1. Header: avatar + full name + Outfitly Verified Master badge
+///   2. Stats row: Rating (★ 4.8 · N reviews) and Jobs Completed
+///   3. Specialties section: Wrap of Chips with an EDIT affordance
+///   4. My Work: portfolio gallery with upload CTA
+///   5. Partner details card (legacy editable fields)
+///   6. Sign out
 ///
-/// The email field is read-only — changing it goes through Supabase
-/// Auth's email-change flow which is out of scope for this screen.
-/// Everything else (full name, phone, years of experience) is
-/// editable and validated client-side before the network round-trip.
+/// The header + stats + specialties form the public credibility
+/// surface — what a customer effectively sees on the customer-app
+/// tailor card. Editing them updates the same `tailor_profiles` row
+/// that drives that customer view, so changes here ripple through.
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
 
@@ -104,6 +109,36 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  Future<void> _editSpecialties() async {
+    final current = _profile?.specialties ?? const <String>[];
+    final updated = await showModalBottomSheet<List<String>>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      isScrollControlled: true,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) =>
+          _SpecialtiesEditorSheet(initial: current),
+    );
+
+    if (updated == null) return; // Cancelled.
+    try {
+      final saved = await _service.updateSpecialties(updated);
+      if (!mounted) return;
+      setState(() => _profile = saved);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Specialties updated.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not save specialties: $e')),
+      );
+    }
+  }
+
   Future<void> _logout() async {
     await AppSupabase.client.auth.signOut();
     if (!mounted) return;
@@ -114,10 +149,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => context.go('/radar'),
-        ),
         title: const Text('Account'),
         actions: [
           if (_profile != null && !_editing)
@@ -152,13 +183,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
 
     final email = AppSupabase.client.auth.currentUser?.email ?? '—';
+    // Mocked completed-jobs counter for now — surfaces alongside the
+    // rating in the stats row. Will be sourced from
+    // count(tailor_appointments where status='completed') once the
+    // earnings feature swaps off mock data.
+    final jobsCompleted = _mockJobsCompleted(p);
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _Header(profile: p, email: email),
+          const SizedBox(height: 20),
+          _StatsRow(profile: p, jobsCompleted: jobsCompleted),
+          const SizedBox(height: 28),
+          _sectionLabel('SPECIALTIES'),
+          const SizedBox(height: 12),
+          _SpecialtiesSection(
+            specialties: p.specialties,
+            onEdit: _editSpecialties,
+          ),
+          const SizedBox(height: 28),
+          const PortfolioGallery(),
           const SizedBox(height: 28),
           _sectionLabel('PARTNER DETAILS'),
           const SizedBox(height: 12),
@@ -174,6 +221,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ],
       ),
     );
+  }
+
+  /// Falls back to a deterministic small number derived from the
+  /// rating × reviews so the row looks lived-in for new tailors.
+  int _mockJobsCompleted(TailorProfile p) {
+    if (p.totalReviews > 0) return p.totalReviews;
+    return 0;
   }
 
   Widget _sectionLabel(String text) {
@@ -322,8 +376,8 @@ class _Header extends StatelessWidget {
     return Row(
       children: [
         Container(
-          width: 56,
-          height: 56,
+          width: 64,
+          height: 64,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             color: AppColors.accent.withValues(alpha: 0.18),
@@ -346,24 +400,494 @@ class _Header extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                profile.fullName,
-                style: text.titleLarge?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.2,
-                ),
+              Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      profile.fullName,
+                      style: text.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.2,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (profile.isVerified) ...[
+                    const SizedBox(width: 6),
+                    const Icon(
+                      Icons.verified,
+                      size: 20,
+                      color: Color(0xFFE8B53D), // Gold checkmark
+                    ),
+                  ],
+                ],
               ),
-              const SizedBox(height: 2),
-              Text(
-                email,
-                style: text.bodyMedium?.copyWith(
-                  color: AppColors.textSecondary,
+              const SizedBox(height: 4),
+              if (profile.isVerified)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE8B53D).withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    'OUTFITLY VERIFIED MASTER',
+                    style: text.labelSmall?.copyWith(
+                      color: const Color(0xFFE8B53D),
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 1.0,
+                      fontSize: 10,
+                    ),
+                  ),
+                )
+              else
+                Text(
+                  email,
+                  style: text.bodyMedium?.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
                 ),
-              ),
             ],
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Two-stat row sitting under the header. Rating on the left, Jobs
+/// Completed on the right, with a thin divider between.
+class _StatsRow extends StatelessWidget {
+  const _StatsRow({required this.profile, required this.jobsCompleted});
+
+  final TailorProfile profile;
+  final int jobsCompleted;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final ratingDisplay =
+        profile.rating > 0 ? profile.rating.toStringAsFixed(1) : '—';
+    final reviewsDisplay = profile.totalReviews > 0
+        ? '${profile.totalReviews} review${profile.totalReviews == 1 ? '' : 's'}'
+        : 'No reviews yet';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.divider),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.star_rounded,
+                        size: 18, color: Color(0xFFFFC15C)),
+                    const SizedBox(width: 4),
+                    Text(
+                      ratingDisplay,
+                      style: text.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.3,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  reviewsDisplay,
+                  style: text.bodySmall?.copyWith(
+                    color: AppColors.textTertiary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            width: 1,
+            height: 38,
+            color: AppColors.divider,
+          ),
+          Expanded(
+            child: Column(
+              children: [
+                Text(
+                  jobsCompleted.toString(),
+                  style: text.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.3,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  jobsCompleted == 1 ? 'Job completed' : 'Jobs completed',
+                  style: text.bodySmall?.copyWith(
+                    color: AppColors.textTertiary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Section showing the tailor's specialty tags as a [Wrap] of
+/// [Chip]s, with an inline EDIT button that opens a bottom-sheet
+/// editor.
+class _SpecialtiesSection extends StatelessWidget {
+  const _SpecialtiesSection({
+    required this.specialties,
+    required this.onEdit,
+  });
+
+  final List<String> specialties;
+  final VoidCallback onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 10, 14),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.divider),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  specialties.isEmpty
+                      ? 'What do you specialize in?'
+                      : 'What you make',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                ),
+              ),
+              TextButton(
+                onPressed: onEdit,
+                child: const Text('EDIT'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          if (specialties.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+              child: Text(
+                'Add tags like "Sherwanis", "Suits", "Blouses" so customers know what you\'re best at.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: AppColors.textTertiary,
+                      height: 1.4,
+                    ),
+              ),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final tag in specialties)
+                    _SpecialtyChip(label: tag),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SpecialtyChip extends StatelessWidget {
+  const _SpecialtyChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppColors.accent.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: AppColors.accent.withValues(alpha: 0.35),
+        ),
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: AppColors.accent,
+              fontWeight: FontWeight.w600,
+            ),
+      ),
+    );
+  }
+}
+
+/// Modal sheet for adding/removing specialties.
+///
+/// Type a tag, hit Enter (or the + button) to add it. Tap the × on
+/// any chip to remove it. SAVE returns the new list to the caller;
+/// CANCEL returns null.
+class _SpecialtiesEditorSheet extends StatefulWidget {
+  const _SpecialtiesEditorSheet({required this.initial});
+
+  final List<String> initial;
+
+  @override
+  State<_SpecialtiesEditorSheet> createState() =>
+      _SpecialtiesEditorSheetState();
+}
+
+class _SpecialtiesEditorSheetState extends State<_SpecialtiesEditorSheet> {
+  late final List<String> _tags = [...widget.initial];
+  final _ctrl = TextEditingController();
+  static const _suggestions = <String>[
+    'Sherwanis',
+    'Suits',
+    'Blouses',
+    'Lehengas',
+    'Kurtas',
+    'Sarees',
+    'Anarkalis',
+    'Wedding wear',
+    'Alterations',
+  ];
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _add(String raw) {
+    final v = raw.trim();
+    if (v.isEmpty) return;
+    if (_tags.any((t) => t.toLowerCase() == v.toLowerCase())) return;
+    setState(() {
+      _tags.add(v);
+      _ctrl.clear();
+    });
+  }
+
+  void _remove(String tag) {
+    setState(() => _tags.remove(tag));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    // Suggestions not yet picked.
+    final remainingSuggestions = _suggestions
+        .where((s) =>
+            !_tags.any((t) => t.toLowerCase() == s.toLowerCase()))
+        .toList(growable: false);
+
+    return Padding(
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
+      child: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.divider,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 18),
+              Text(
+                'Edit Specialties',
+                style: text.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Customers see these on your tailor card.',
+                style: text.bodyMedium?.copyWith(
+                  color: AppColors.textTertiary,
+                ),
+              ),
+              const SizedBox(height: 20),
+              if (_tags.isNotEmpty) ...[
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final tag in _tags)
+                      _RemovableChip(
+                        label: tag,
+                        onRemove: () => _remove(tag),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+              ],
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _ctrl,
+                      textInputAction: TextInputAction.done,
+                      onSubmitted: _add,
+                      decoration: const InputDecoration(
+                        hintText: 'e.g. Sherwanis',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  IconButton.filled(
+                    onPressed: () => _add(_ctrl.text),
+                    icon: const Icon(Icons.add_rounded),
+                    style: IconButton.styleFrom(
+                      backgroundColor: AppColors.accent,
+                      foregroundColor: Colors.black,
+                      minimumSize: const Size(52, 52),
+                    ),
+                  ),
+                ],
+              ),
+              if (remainingSuggestions.isNotEmpty) ...[
+                const SizedBox(height: 18),
+                Text(
+                  'SUGGESTIONS',
+                  style: text.labelSmall?.copyWith(
+                    color: AppColors.textTertiary,
+                    letterSpacing: 1.4,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final s in remainingSuggestions)
+                      InkWell(
+                        onTap: () => _add(s),
+                        borderRadius: BorderRadius.circular(999),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: AppColors.surfaceRaised,
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(color: AppColors.divider),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.add,
+                                  size: 14,
+                                  color: AppColors.textSecondary),
+                              const SizedBox(width: 4),
+                              Text(
+                                s,
+                                style: text.labelMedium?.copyWith(
+                                  color: AppColors.textSecondary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('CANCEL'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.of(context).pop(_tags),
+                      child: const Text('SAVE'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RemovableChip extends StatelessWidget {
+  const _RemovableChip({required this.label, required this.onRemove});
+
+  final String label;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 6, 6, 6),
+      decoration: BoxDecoration(
+        color: AppColors.accent.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: AppColors.accent.withValues(alpha: 0.35),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: AppColors.accent,
+                  fontWeight: FontWeight.w600,
+                ),
+          ),
+          const SizedBox(width: 4),
+          InkWell(
+            onTap: onRemove,
+            borderRadius: BorderRadius.circular(999),
+            child: const Padding(
+              padding: EdgeInsets.all(2),
+              child: Icon(Icons.close_rounded,
+                  size: 14, color: AppColors.accent),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

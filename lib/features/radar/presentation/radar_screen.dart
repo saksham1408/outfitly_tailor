@@ -114,13 +114,6 @@ class _RadarScreenState extends State<RadarScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Dispatch Radar'),
-        actions: [
-          IconButton(
-            tooltip: 'Account',
-            icon: const Icon(Icons.person_outline_rounded),
-            onPressed: () => context.push('/profile'),
-          ),
-        ],
       ),
       body: StreamBuilder<List<TailorAppointment>>(
         stream: _service.pendingRequests(),

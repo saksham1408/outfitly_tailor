@@ -39,6 +39,11 @@ dependencies:
   # on the scheduled-time stamps.
   google_fonts: ^6.3.2
 
+  # Portfolio gallery upload flow — opens the native gallery, hands
+  # us back an XFile we forward to Supabase Storage. Used inside
+  # PortfolioGallery on the profile screen.
+  image_picker: ^1.1.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

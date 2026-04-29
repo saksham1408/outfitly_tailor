@@ -77,4 +77,28 @@ class ProfileService {
 
     return TailorProfile.fromJson(updated);
   }
+
+  /// Replace the tailor's advertised specialties (e.g. ['Sherwanis',
+  /// 'Suits']) atomically. Empty/whitespace entries are dropped and
+  /// duplicates de-duped before writing — keeps the UI's casual
+  /// "type, then chip" UX from polluting the column.
+  Future<TailorProfile> updateSpecialties(List<String> specialties) async {
+    final uid = _client.auth.currentUser?.id;
+    if (uid == null) {
+      throw StateError('Cannot update specialties while signed out.');
+    }
+
+    final cleaned = <String>{
+      for (final s in specialties) s.trim(),
+    }..removeWhere((s) => s.isEmpty);
+
+    final updated = await _client
+        .from(_table)
+        .update({'specialties': cleaned.toList(growable: false)})
+        .eq('id', uid)
+        .select()
+        .single();
+
+    return TailorProfile.fromJson(updated);
+  }
 }
