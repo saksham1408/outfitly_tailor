@@ -28,6 +28,17 @@ class IncomingRequestSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
 
+    // Marketplace direct requests are a distinct visual beat — the
+    // customer hand-picked THIS tailor from the selection screen,
+    // and the sheet should make that pride-of-place obvious so the
+    // tailor reads it as personal rather than yet another broadcast.
+    final isDirect =
+        appointment.status == AppointmentStatus.pendingTailorApproval;
+    final headline = isDirect ? 'DIRECT REQUEST' : 'NEW REQUEST';
+    final subtitle = isDirect
+        ? 'Hand-picked from the marketplace'
+        : 'Bespoke tailoring visit';
+
     return SafeArea(
       top: false,
       child: Padding(
@@ -51,24 +62,19 @@ class IncomingRequestSheet extends StatelessWidget {
             const SizedBox(height: 22),
             Row(
               children: [
-                Container(
-                  width: 10,
-                  height: 10,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: AppColors.accent,
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppColors.accent.withValues(alpha: 0.6),
-                        blurRadius: 10,
-                        spreadRadius: 2,
-                      ),
-                    ],
-                  ),
+                Icon(
+                  // Person-check on direct requests, pulsing dot on
+                  // broadcasts. The icon swap is what carries the
+                  // semantic difference at a glance.
+                  isDirect
+                      ? Icons.person_pin_circle_rounded
+                      : Icons.notifications_active_rounded,
+                  size: isDirect ? 18 : 14,
+                  color: AppColors.accent,
                 ),
                 const SizedBox(width: 10),
                 Text(
-                  'NEW REQUEST',
+                  headline,
                   style: text.labelMedium?.copyWith(
                     color: AppColors.accent,
                     fontWeight: FontWeight.w700,
@@ -79,7 +85,7 @@ class IncomingRequestSheet extends StatelessWidget {
             ),
             const SizedBox(height: 14),
             Text(
-              'Bespoke tailoring visit',
+              subtitle,
               style: text.headlineSmall?.copyWith(
                 fontWeight: FontWeight.w700,
                 letterSpacing: -0.2,

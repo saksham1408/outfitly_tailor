@@ -6,20 +6,28 @@ import 'package:flutter/foundation.dart';
 /// values — both apps (customer + partner) agree on these strings,
 /// so changing one here means migrating the database too.
 ///
-/// Happy-path progression:
+/// Two booking modes share this enum:
 ///
-///   pending → accepted → enRoute → arrived → completed
-///                                       ↘ cancelled
+///   * **Broadcast (legacy)** — the customer's request fans out to
+///     every tailor on the radar; first to accept wins:
+///     pending → accepted → enRoute → arrived → completed
+///   * **Direct request (marketplace)** — the customer hand-picked
+///     a specific tailor from the selection screen, so the row
+///     already carries `tailor_id` and lands in:
+///     pendingTailorApproval → accepted → enRoute → arrived → completed
 ///
-/// `enRoute` and `arrived` were added in migration 026 so the
-/// customer's tracking screen can show a delivery-app-style
-/// timeline as the tailor moves through their visit.
+/// Either branch can short-circuit to `cancelled`. Both pending
+/// variants are surfaced together on the radar; the UI labels
+/// direct requests so the tailor knows they were specifically
+/// chosen.
 ///
-/// The Dart enum uses lower-camelCase, but the column stores the
-/// snake_case form (`en_route`); [fromString] / [asDbString]
-/// bridge the two so callers don't have to think about it.
+/// Migration 036 added `pendingTailorApproval` plus the RLS scope
+/// that hides direct-request rows from every tailor except the
+/// chosen one — so the Partner App stream can drop its server-side
+/// status filter and let RLS do the heavy lifting.
 enum AppointmentStatus {
   pending,
+  pendingTailorApproval,
   accepted,
   enRoute,
   arrived,
@@ -30,6 +38,8 @@ enum AppointmentStatus {
     switch (raw) {
       case 'accepted':
         return AppointmentStatus.accepted;
+      case 'pending_tailor_approval':
+        return AppointmentStatus.pendingTailorApproval;
       case 'en_route':
         return AppointmentStatus.enRoute;
       case 'arrived':
@@ -45,24 +55,27 @@ enum AppointmentStatus {
   }
 
   /// Snake-case form stored in the `tailor_appointments.status`
-  /// column. Defaults to [name] for the single-word states; the
-  /// multi-word `enRoute` is the lone special case.
+  /// column. Most enum values match `name` directly; the multi-
+  /// word ones get explicit casing.
   String get asDbString {
     switch (this) {
       case AppointmentStatus.enRoute:
         return 'en_route';
+      case AppointmentStatus.pendingTailorApproval:
+        return 'pending_tailor_approval';
       default:
         return name;
     }
   }
 
-  /// Position in the happy-path progression. Used by the active
-  /// job screen's stepper to render the current node + decide
-  /// which CTA to show next. `cancelled` returns -1 so callers
-  /// can branch on it.
+  /// Position in the happy-path progression. Both pending variants
+  /// share index 0 because they're functionally the same step from
+  /// the Partner UI's view: a pre-accept request awaiting a tap.
+  /// `cancelled` returns -1 so callers can branch on it.
   int get progressIndex {
     switch (this) {
       case AppointmentStatus.pending:
+      case AppointmentStatus.pendingTailorApproval:
         return 0;
       case AppointmentStatus.accepted:
         return 1;
@@ -79,8 +92,8 @@ enum AppointmentStatus {
 
   /// The next state the tailor can advance to from this one, or
   /// null if there's no further forward step (`completed`,
-  /// `cancelled`, or the not-yet-claimed `pending`). The Partner
-  /// UI uses this to label the primary CTA.
+  /// `cancelled`, or the not-yet-claimed pending variants — those
+  /// transition via [acceptRequest], not the stepper).
   AppointmentStatus? get nextForward {
     switch (this) {
       case AppointmentStatus.accepted:
@@ -90,11 +103,18 @@ enum AppointmentStatus {
       case AppointmentStatus.arrived:
         return AppointmentStatus.completed;
       case AppointmentStatus.pending:
+      case AppointmentStatus.pendingTailorApproval:
       case AppointmentStatus.completed:
       case AppointmentStatus.cancelled:
         return null;
     }
   }
+
+  /// Whether this row is a pre-accept request the radar should
+  /// surface (either bucket — broadcast or direct).
+  bool get isAwaitingAccept =>
+      this == AppointmentStatus.pending ||
+      this == AppointmentStatus.pendingTailorApproval;
 }
 
 /// Wire-format representation of one tailor visit request.

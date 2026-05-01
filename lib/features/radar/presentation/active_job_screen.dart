@@ -54,6 +54,16 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
   /// from [AppointmentStatus.nextForward] so we never need to special-
   /// case "is this the final step?" here — just call progressJob and
   /// trust the enum.
+  ///
+  /// Failure handling: [AppointmentService.progressJob] throws a typed
+  /// [ProgressJobException] when the UPDATE matches zero rows, so we
+  /// can show the *specific* reason (cancelled vs. session swap vs.
+  /// stale screen) instead of the old generic "no longer active"
+  /// catch-all that hid three different bugs behind one message.
+  ///
+  /// `staleStatus` is the only reason we DON'T bounce to the radar —
+  /// that one's recoverable by re-syncing the local state to whatever
+  /// the DB actually says, so the tailor can keep going from there.
   Future<void> _advance() async {
     final next = _appointment.status.nextForward;
     if (next == null || _progressing) return;
@@ -67,22 +77,6 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
       );
 
       if (!mounted) return;
-
-      if (updated == null) {
-        // The race guard rejected the update — most likely cause is
-        // the customer cancelling between renders. Tell the tailor
-        // and pop back to the radar so they can pick up another job.
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'This job is no longer active. Returning to the radar.',
-            ),
-          ),
-        );
-        context.go('/radar');
-        return;
-      }
-
       setState(() => _appointment = updated);
 
       // If we just landed on `completed`, kick the tailor back to the
@@ -95,13 +89,46 @@ class _ActiveJobScreenState extends State<ActiveJobScreen> {
         if (!mounted) return;
         context.go('/radar');
       }
+    } on ProgressJobException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message)),
+      );
+      // Bounce back to the radar for everything except `staleStatus`,
+      // which is recoverable — re-sync local state and stay put.
+      if (e.reason == ProgressJobFailure.staleStatus) {
+        // Pull the row's actual current state and rebuild the screen.
+        // The tailor can press the (now-correctly-labelled) CTA to
+        // continue from wherever they actually are.
+        await _refetchAppointment();
+      } else {
+        context.go('/radar');
+      }
     } catch (e) {
+      // Network / unknown failure — show it but don't kick the tailor
+      // out, since the job state is unchanged. They can retry.
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Could not update status: $e')),
       );
     } finally {
       if (mounted) setState(() => _progressing = false);
+    }
+  }
+
+  /// Re-read the appointment row and rebuild local state so the
+  /// stepper + CTA reflect the DB's truth. Called after a
+  /// `staleStatus` failure (typically: hot-reload survivor or a
+  /// manual DB tweak) so the screen self-heals without forcing the
+  /// tailor back to the radar.
+  Future<void> _refetchAppointment() async {
+    try {
+      final fresh = await _service.fetchById(_appointment.id);
+      if (!mounted || fresh == null) return;
+      setState(() => _appointment = fresh);
+    } catch (_) {
+      // Best-effort; if we can't refetch, the existing snackbar copy
+      // already pointed the tailor at "pull to refresh".
     }
   }
 
@@ -236,6 +263,8 @@ class _StatusBadge extends StatelessWidget {
     switch (s) {
       case AppointmentStatus.pending:
         return ('PENDING', Icons.hourglass_empty);
+      case AppointmentStatus.pendingTailorApproval:
+        return ('AWAITING YOU', Icons.person_pin_circle_rounded);
       case AppointmentStatus.accepted:
         return ('ACCEPTED', Icons.check_circle);
       case AppointmentStatus.enRoute:
@@ -442,6 +471,7 @@ class _PrimaryCta extends StatelessWidget {
       // The terminal/initial cases are filtered out at the call
       // site — return a sane fallback rather than crashing.
       case AppointmentStatus.pending:
+      case AppointmentStatus.pendingTailorApproval:
       case AppointmentStatus.completed:
       case AppointmentStatus.cancelled:
         return ('CONTINUE', Icons.arrow_forward);
