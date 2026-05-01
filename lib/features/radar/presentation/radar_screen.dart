@@ -52,11 +52,17 @@ class _RadarScreenState extends State<RadarScreen> {
       if (!mounted) return;
 
       if (claimed == null) {
-        // Race lost — another tailor beat us to it.
+        // Either the broadcast race was lost OR the direct row was
+        // already cancelled / RLS-hidden. Both look the same from
+        // the tailor's perspective: this request can no longer be
+        // accepted.
         Navigator.of(context).pop(); // Close sheet.
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('That request was already taken by another tailor.'),
+            content: Text(
+              'That request is no longer available '
+              '(taken, cancelled, or assigned to a different tailor).',
+            ),
           ),
         );
         return;
@@ -65,10 +71,16 @@ class _RadarScreenState extends State<RadarScreen> {
       if (!mounted) return;
       Navigator.of(context).pop(); // Close the incoming sheet.
       context.pushNamed('activeJob', extra: claimed);
-    } catch (_) {
+    } catch (e, st) {
+      // Surface the actual exception text so testers / engineers
+      // can paste it back to the team instead of an opaque "try
+      // again". Most exceptions here are PostgrestException with a
+      // concrete RLS / connectivity reason; printing the toString
+      // is fine for a TestFlight-class build.
+      debugPrint('Radar.acceptRequest failed — $e\n$st');
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not accept — please try again.')),
+        SnackBar(content: Text('Could not accept: $e')),
       );
     } finally {
       if (mounted) setState(() => _accepting = false);

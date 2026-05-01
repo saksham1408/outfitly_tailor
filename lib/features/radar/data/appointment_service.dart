@@ -114,60 +114,90 @@ class AppointmentService {
 
   /// Claim an awaiting-accept appointment for the current tailor.
   ///
-  /// Two row types accept differently:
+  /// We branch by the row's CURRENT status (read first), then run
+  /// the matching UPDATE. Splitting the read and write makes the
+  /// failure mode explicit — if the row has vanished or moved past
+  /// pending, we know exactly which case to surface — and avoids
+  /// a subtle bug where `.update().eq().select().maybeSingle()`
+  /// can throw under some supabase-flutter versions when the
+  /// UPDATE matches zero rows.
   ///
-  ///   * **Broadcast (`pending`)** — this tailor competed with every
-  ///     other tailor for the row. The UPDATE is race-guarded by
-  ///     `.eq('status','pending')` so a late tap by a slower tailor
-  ///     can't overwrite a row that's already been claimed.
+  /// Two paths:
+  ///   * **Broadcast (`pending`)** — race-guarded UPDATE that
+  ///     flips status AND fills tailor_id. A late tap loses the
+  ///     race cleanly because the WHERE doesn't match.
+  ///   * **Direct (`pending_tailor_approval`)** — UPDATE just
+  ///     flips status. RLS already scoped the row to this tailor,
+  ///     and we re-assert tailor_id in the WHERE for belt-and-
+  ///     braces.
   ///
-  ///   * **Direct (`pending_tailor_approval`)** — the customer
-  ///     specifically picked this tailor; no race, the tailor_id
-  ///     was already set at INSERT time. The UPDATE just flips
-  ///     status. RLS guarantees that only the chosen tailor could
-  ///     have seen the row in the first place.
-  ///
-  /// We try the broadcast claim first; if zero rows match, we fall
-  /// back to the direct path. Either way we return the resulting
-  /// row or null if neither matched (cancelled, RLS-hidden, or a
-  /// race we lost).
+  /// Returns the updated [TailorAppointment] on success, null if
+  /// the row no longer exists / is already claimed / was cancelled.
+  /// Throws only on auth/network errors; the UI distinguishes "lost
+  /// the race" (null) from "something blew up" (exception).
   Future<TailorAppointment?> acceptRequest(String appointmentId) async {
     final tailor = _client.auth.currentUser;
     if (tailor == null) {
       throw StateError('Cannot accept a request while signed out.');
     }
 
-    // Path 1: broadcast claim. The UPDATE flips status AND fills
-    // tailor_id — the latter is what makes "I won the race"
-    // visible to RLS for every subsequent UPDATE.
-    var updated = await _client
+    // Phase 1: read current state. RLS already scopes which rows
+    // we can see — if the SELECT returns null, the row is either
+    // hard-deleted or hidden from us, and acceptance is impossible.
+    final current = await _client
         .from(_table)
-        .update({
-          'status': AppointmentStatus.accepted.asDbString,
-          'tailor_id': tailor.id,
-        })
+        .select('id, status, tailor_id')
         .eq('id', appointmentId)
-        .eq('status', AppointmentStatus.pending.asDbString)
-        .select()
         .maybeSingle();
 
-    if (updated != null) return TailorAppointment.fromJson(updated);
+    if (current == null) {
+      debugPrint('acceptRequest: row $appointmentId not visible / not found');
+      return null;
+    }
 
-    // Path 2: direct request. The row already has tailor_id set
-    // (and the RLS scope means only THIS tailor could see it
-    // arriving on the radar). Just flip status.
-    updated = await _client
-        .from(_table)
-        .update({'status': AppointmentStatus.accepted.asDbString})
-        .eq('id', appointmentId)
-        .eq('status',
-            AppointmentStatus.pendingTailorApproval.asDbString)
-        .eq('tailor_id', tailor.id)
-        .select()
-        .maybeSingle();
+    final currentStatus =
+        AppointmentStatus.fromString(current['status'] as String?);
+    final currentTailorId = current['tailor_id'] as String?;
 
-    if (updated == null) return null;
-    return TailorAppointment.fromJson(updated);
+    if (currentStatus == AppointmentStatus.pending &&
+        currentTailorId == null) {
+      // Broadcast claim — race-guarded.
+      final rows = await _client
+          .from(_table)
+          .update({
+            'status': AppointmentStatus.accepted.asDbString,
+            'tailor_id': tailor.id,
+          })
+          .eq('id', appointmentId)
+          .eq('status', AppointmentStatus.pending.asDbString)
+          .select();
+      if (rows.isEmpty) return null;
+      return TailorAppointment.fromJson(rows.first);
+    }
+
+    if (currentStatus == AppointmentStatus.pendingTailorApproval &&
+        currentTailorId == tailor.id) {
+      // Direct accept — flip status only; tailor_id is already us.
+      final rows = await _client
+          .from(_table)
+          .update({'status': AppointmentStatus.accepted.asDbString})
+          .eq('id', appointmentId)
+          .eq('status',
+              AppointmentStatus.pendingTailorApproval.asDbString)
+          .eq('tailor_id', tailor.id)
+          .select();
+      if (rows.isEmpty) return null;
+      return TailorAppointment.fromJson(rows.first);
+    }
+
+    // Anything else — accepted by another tailor, cancelled,
+    // assigned to someone else, etc. — we can't do anything with.
+    debugPrint(
+      'acceptRequest: cannot accept appt=$appointmentId. '
+      'status=$currentStatus, tailor_id=$currentTailorId, '
+      'me=${tailor.id}',
+    );
+    return null;
   }
 
   /// Advance the appointment to the next lifecycle stage.
